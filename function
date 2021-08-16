@@ -1,0 +1,113 @@
+import settings
+import json
+import requests
+import logging
+
+LOGGER = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
+
+class FunctionException(Exception):
+    pass
+
+
+max_delta = settings.MAX_DELTA
+base_language = settings.BASE_LANGUAGE
+get_all_locales_url = settings.API_URL + "/locales"
+get_all_assets_url = settings.API_URL + "/assets"
+get_translations_by_assets_url = settings.API_URL + "/translations/{0}.json"
+params = dict(key=settings.API_KEY)
+
+
+def make_request(url):
+    LOGGER.info(
+        f"Start function 'make_request', "
+        f"URL =  {url}, API_KEY = {settings.API_KEY}")
+    response = requests.get(url, params)
+    if response.ok:
+        return response.json()
+    raise FunctionException(f"Function 'make_request': ERROR. Status_code : {response.status_code}")
+
+
+def get_locales() -> list:
+    LOGGER.info(
+        f"Start function 'get_locales")
+    locales_request = make_request(get_all_locales_url)
+    locales = [locale['code'] for locale in locales_request]
+    LOGGER.info(
+        f"Project locales: {locales}")
+    return locales
+
+
+def get_all_assets() -> list:
+    assets_request = make_request(get_all_assets_url)
+    LOGGER.info(
+        f"Downloading assets")
+    assets = [asset['id'] for asset in assets_request]
+    LOGGER.info(
+        f"Project assets count: {len(assets)}\n"
+        f"Project assets: {assets}")
+    return assets
+
+
+def base_language_choice() -> str:
+    project_locales = get_locales()
+    if base_language in project_locales:
+        print(f"'Вы выбрали базовую локаль' / "
+              f"'You have chosen the basic locale': {base_language}")
+        return str(base_language)
+    else:
+        raise Exception(f"'Данная локаль не найдена на проекте' / "
+                        f"'The locale was not found on the project': {base_language}, \n"
+                        f"'Список доступных локалей' / "
+                        f"'The list of available locales': {project_locales}")
+
+
+def get_translations_by_asset_id() -> list:
+    get_locales()
+    all_assets = get_all_assets()
+    LOGGER.info(
+        f"Downloading translations for {len(all_assets)} assets")
+    return [make_request(get_translations_by_assets_url.format(asset_id)) for asset_id in all_assets]
+
+
+def string_comparator():
+    total_rows = 0
+    translations = []
+    base_language_translations = []
+    base_lang = base_language_choice()
+    all_translations = get_translations_by_asset_id()
+    for asset in all_translations:
+        for asset_by_locale in asset:
+            translations.append({'asset_id': asset_by_locale['id'],
+                                 'asset_locale': asset_by_locale['locale']['code'],
+                                 'translation': asset_by_locale['translation'],
+                                 'translation_len': int(len(asset_by_locale['translation']))})
+    for asset in all_translations:
+        for asset_by_locale in asset:
+            if asset_by_locale['locale']['code'] == base_lang:
+                base_language_translations.append({'asset_id': asset_by_locale['id'],
+                                                   'asset_locale': asset_by_locale['locale']['code'],
+                                                   'translation': asset_by_locale['translation'],
+                                                   'translation_len': int(len(asset_by_locale['translation']))})
+    for translate in translations:
+        for base_lang_translate in base_language_translations:
+            if translate['translation_len'] > base_lang_translate['translation_len'] + max_delta and \
+                    translate['asset_id'] == base_lang_translate['asset_id']:
+                total_rows += 1
+                print(
+                    f"id: {total_rows}. "
+                    f"{translate['translation_len']} > {base_lang_translate['translation_len'] + max_delta}. "
+                    f"{translate}, \n {base_lang_translate}. "
+                    f"Длина перевода {translate['asset_locale']} больше, чем базовая локаль {base_lang}: на "
+                    f"{(translate['translation_len'] - max_delta) - base_lang_translate['translation_len']} символа(ов). "
+                    f"Без учета предельно допустимого отклонения: на "
+                    f"{translate['translation_len'] - base_lang_translate['translation_len']} символа(ов)."
+                    f"\n")
+
+    print(f'Найдено {total_rows} записей. Базовая локаль: {base_lang}. '
+          f'*Подсчет длины строки: базовая строка + предельное отклонение {max_delta} символа(ов)')
+
+
+if __name__ == "__main__":
+    string_comparator()

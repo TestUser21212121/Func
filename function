@@ -20,7 +20,7 @@ params = dict(key=settings.API_KEY)
 
 
 def make_request(url):
-    LOGGER.info(
+    LOGGER.debug(
         f"Start function 'make_request', "
         f"URL =  {url}, API_KEY = {settings.API_KEY}")
     response = requests.get(url, params)
@@ -53,8 +53,8 @@ def get_all_assets() -> list:
 def base_language_choice() -> str:
     project_locales = get_locales()
     if base_language in project_locales:
-        print(f"'Вы выбрали базовую локаль' / "
-              f"'You have chosen the basic locale': {base_language}")
+        LOGGER.info(f"'Вы выбрали базовую локаль' / "
+                    f"'You have chosen the basic locale': {base_language}")
         return str(base_language)
     else:
         raise Exception(f"'Данная локаль не найдена на проекте' / "
@@ -63,51 +63,45 @@ def base_language_choice() -> str:
                         f"'The list of available locales': {project_locales}")
 
 
-def get_translations_by_asset_id() -> list:
-    get_locales()
-    all_assets = get_all_assets()
-    LOGGER.info(
-        f"Downloading translations for {len(all_assets)} assets")
-    return [make_request(get_translations_by_assets_url.format(asset_id)) for asset_id in all_assets]
+def get_translations_by_asset_id(asset_id):
+    api = get_translations_by_assets_url.format(asset_id)
+    return make_request(api)
 
 
-def string_comparator():
-    total_rows = 0
-    translations = []
-    base_language_translations = []
-    base_lang = base_language_choice()
-    all_translations = get_translations_by_asset_id()
-    for asset in all_translations:
-        for asset_by_locale in asset:
-            translations.append({'asset_id': asset_by_locale['id'],
-                                 'asset_locale': asset_by_locale['locale']['code'],
-                                 'translation': asset_by_locale['translation'],
-                                 'translation_len': int(len(asset_by_locale['translation']))})
-    for asset in all_translations:
-        for asset_by_locale in asset:
-            if asset_by_locale['locale']['code'] == base_lang:
-                base_language_translations.append({'asset_id': asset_by_locale['id'],
-                                                   'asset_locale': asset_by_locale['locale']['code'],
-                                                   'translation': asset_by_locale['translation'],
-                                                   'translation_len': int(len(asset_by_locale['translation']))})
-    for translate in translations:
-        for base_lang_translate in base_language_translations:
-            if translate['translation_len'] > base_lang_translate['translation_len'] + max_delta and \
-                    translate['asset_id'] == base_lang_translate['asset_id']:
-                total_rows += 1
-                print(
-                    f"id: {total_rows}. "
-                    f"{translate['translation_len']} > {base_lang_translate['translation_len'] + max_delta}. "
-                    f"{translate}, \n {base_lang_translate}. "
-                    f"Длина перевода {translate['asset_locale']} больше, чем базовая локаль {base_lang}: на "
-                    f"{(translate['translation_len'] - max_delta) - base_lang_translate['translation_len']} символа(ов). "
-                    f"Без учета предельно допустимого отклонения: на "
-                    f"{translate['translation_len'] - base_lang_translate['translation_len']} символа(ов)."
-                    f"\n")
+def string_comparator(assets):
+    row_count = 0
+    dump = {}
+    LOGGER.info(f"Максимальное допустимое отклонение: {max_delta}")
+    for asset_id in assets:
+        locales = get_translations_by_asset_id(asset_id)
+        base_locale_translation = list(
+            filter(
+                lambda locale: locale['locale']['code'] == base_language, locales))[0]['translation']
 
-    print(f'Найдено {total_rows} записей. Базовая локаль: {base_lang}. '
-          f'*Подсчет длины строки: базовая строка + предельное отклонение {max_delta} символа(ов)')
+        base_local_len = len(base_locale_translation) + max_delta
+        different = [
+            {
+                locale['locale']['code']: f"{abs(base_local_len - len(locale['translation']))} символа(ов). "
+                                          f"Translation:  {locale['translation']} / {base_locale_translation}"
+            }
+            for locale in locales
+            if locale['locale']['code'] != base_language and base_local_len < len(locale['translation'])
+
+        ]
+        dump[f"Asset_id: {asset_id}"] = different
+
+        for i in different:
+            for k, v in i.items():
+                row_count += 1
+                LOGGER.error(f"  Id: {row_count}. Asset_id: {asset_id}. "
+                             f"Локаль: {k} {v}")
+    LOGGER.info(f"  Общее кол-во отклонений: {row_count}")
+
+    file = open('different.json', 'w')
+    file.write(json.dumps(dump))
 
 
 if __name__ == "__main__":
-    string_comparator()
+    base_language_choice()
+    all_assets = get_all_assets()
+    string_comparator(all_assets)
